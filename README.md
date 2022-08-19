@@ -1,2 +1,1 @@
-# nvcd
-NeoVim nvChad in Docker (also works 
+# nvcd: NeoVim nvChad in Docker
