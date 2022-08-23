@@ -1,0 +1,686 @@
+#!/bin/bash -e
+# vim: noai:noet:ts=4:sw=4:colorcolumn=80
+
+# shellcheck disable=SC2155
+readonly SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+ARGV=("$@")
+POSSIBLE_ARGS=("--clean" "--build" "--config" "--install" "--kill" "--shell" "--help")
+#DEBUG=1
+
+
+
+function check_depends() {
+	for app in $* ; do
+		if ! command -v "${app}" &>/dev/null; then
+			not_available+=("${app}")
+		fi
+	done
+
+
+	if (( ${#not_available[@]} > 0)); then
+		err="Please first install missing dependencies:\n"
+		for app in ${not_available[@]} ; do
+			err+="- '${app}'\n"
+		done
+		err+="\n"
+		msg_error "${err}"
+	fi
+}
+
+function check_environment() {
+	if [ -n "$SSH_CONNECTION" ]; then
+		echo " Connected via SSH "
+	elif [ "$XDG_SESSION_TYPE" = "tty"]; then
+		echo " Connected on console "
+	fi
+}
+
+function config_script_standard() {
+	mkdir -p "$SCRIPT_DIR/share/nvim"/{swap,undo}
+	:;
+}
+
+function config_script() {
+	if [ ! -d "$SCRIPT_DIR/custom" ]; then
+		mkdir "$SCRIPT_DIR/custom"
+		for example in "${SCRIPT_DIR}/NvConfig/examples/"/*; do
+			cp "$example" "$SCRIPT_DIR/custom"
+		done
+	fi
+	if [ ! -d "$SCRIPT_DIR/NvConfig/lua/custom" ]; then
+		echo ln -sr "$SCRIPT_DIR/custom" "$SCRIPT_DIR/NvConfig/lua/custom"
+		ln -sr "$SCRIPT_DIR/custom" "$SCRIPT_DIR/NvConfig/lua/custom"
+	fi
+	#mkdir -p "$SCRIPT_DIR/share/site/pack/packer/opt/ui/"
+	#mkdir -p "$SCRIPT_DIR/share/site/pack/packer/opt/extensions/"
+	#mkdir -p "$SCRIPT_DIR/NvConfig/lua/custom"
+	#for file in "${SCRIPT_DIR}/NvConfig/examples/"/*; do
+	#	cd "${SCRIPT_DIR}/NvConfig/examples/"
+	#	cp $file "$SCRIPT_DIR/NvConfig/lua/custom"
+	#	cd "${SCRIPT_DIR}"
+	#	ln -s -f "./NvConfig/lua/custom/${file##*/}" "${file##*/}"
+	#done
+}
+
+function clean_script_standard() {
+	if [ -d "$SCRIPT_DIR/share" ]; then
+		find "$SCRIPT_DIR/share" -type f \
+			! -wholename "$SCRIPT_DIR/share/undo/*" \
+			! -wholename "$SCRIPT_DIR/share/swap/*" \
+			-exec rm -f {} +
+		find "$SCRIPT_DIR/share" -empty -type d -delete
+	fi
+
+	rm -fvR "$SCRIPT_DIR/cache"
+
+	if [ -z "$(git -C "$SCRIPT_DIR/NvConfig" status --porcelain)" ]; then
+		rm -fvR "$SCRIPT_DIR/NvConfig"
+	else
+		cd "$SCRIPT_DIR/NvConfig"
+		git status
+		msg_error "NvConfig has local changes - Please copy somewhere \n\n"
+	fi
+}
+
+function clean_script() {
+	:;
+}
+
+function delete_broken_symlinks() {
+	cd "${SCRIPT_DIR}"
+	# Delete Symlinks Pointing Inside
+	for file in ./*; do
+	  if [ -L "$file" ]; then
+		  if [ -h "$file" -a ! -e "$file" ]; then
+		  	echo "rm $file"
+		  	rm -v "$file"
+		  else
+		    echo "Ignoring: $file"
+		  fi
+	  fi
+	done
+}
+
+function yes_prompt() {
+	retval=""
+	printf "$*"
+	while [[ ! "$retval" =~ ^y|n$ ]]; do
+		printf "\ty|n "
+		read -n 1 -r retval
+		printf "\n"
+	done
+}
+
+function clear_screen() {
+	printf "\033c" # clear screen
+}
+
+print_center(){
+	local x
+	local y
+	text="$*"
+	x=$(( ($(tput cols) - ${#text}) / 2))
+	echo -ne "\E[6n";read -sdR y; y=$(echo -ne "${y#*[}" | cut -d';' -f1)
+	echo -ne "\033[${y};${x}f$*"
+}
+
+
+function print_usage() {
+	cat <<EOF
+	$PROGNAME:	NeoVim nvChad in Docker
+
+		 Easy wrapper around Docker permissions gauntlet
+		 to run one or more neovim configs
+		 Auto downloadd the nvChad config
+
+		 Just set DOCKER_IMAGE="other-name" if you don't
+		 want configs to have their own docker image
+		 See: https://github.com/erwin/nvcd/
+
+	--help:     This help/usage message
+	            Use '-h' to access neovim help
+
+	--build:	Builds the neovim Docker image (latest stable release)
+		+ NvChad config (head from github)
+
+	--clean:   Build but skips using the cache
+		 run docker build --no-cache
+
+	--shell:   Launch a shell inside the container
+		 Useful for troubleshooting/customizing Dockerfile
+	
+	--config:  Shows exactly show the configuration will run for your system
+
+	--kill:    Stop any instances of the related docker process
+
+	--install: Create symlinks in your \$PATH
+	         If run as root, symlinks in /usr/local/bin
+	
+EOF
+}
+
+function check_braille() {
+	clear_screen
+	cat <<EOF
+	╔════════════════════╗   ⣿⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⣿
+	║                    ║   ⣿                    ⣿ 
+	║   ╭────────────╮   ║   ⣿   ⡏⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⢸   ⣿ 
+	║   │ left boxes │   ║   ⣿   ⡇ right boxes⢸   ⣿ 
+	║   ╰────────────╯   ║   ⣿   ⠓⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠚   ⣿ 
+	╚════════════════════╝   ⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛
+EOF
+
+	yes_prompt "\tCan you see boxes on the left and boxes on the right?\n\n"
+	if [ "$retval" != 'y' ]; then
+		NO_BRAILE=1
+		yes_prompt "\tDo you want to install the Symbola braille font?\n\tBraille fonts also make 'gotop' look awesome!\n\n"
+		if [ "$retval" == 'y' ]; then
+			fonts_dir="${HOME}/.local/share/fonts"
+			# Check the current URL via 
+			# https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=font-symbola
+			# Symbola is for Braile Fonts
+			if [ ! -f "$fonts_dir/Symbola.otf" ]; then
+				if [ ! -f "Symbola.zip" ]; then
+					curl -LS "https://dn-works.com/wp-content/uploads/2020/UFAS-Fonts/Symbola.zip" --output "Symbola.zip"
+				fi
+				unzip -jqo "Symbola.zip" Symbola.otf -d "${fonts_dir}"
+			fi
+			msg_green "\nPlease restart your terminal to activate the new font\n\n\n"
+			exit 1
+		fi
+	fi
+}
+
+function check_font() {
+	clear_screen
+	cat <<EOF
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣿
+⣿⠛⠛⠛⠛⠛⠛⠛⠛⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⡉⠉⠉⢉⣿⣿⠉⠉⠉⣹⣿⣿⣿⣿⣿⣅⠀⠀⠙⢿⣿⣿⣿⣿⣿
+⣿⠀⠰⣦⡀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⡿⠿⠿⠿⠿⠿⠿⠿⠿⠧⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⢸⠟⠁⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⠀⠙⢿⣿⣿⣿
+⣿⠀⢠⠞⢁⣀⣀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣷⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⡦⢙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⠀⠀⠐⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠀⢀⣿⣿⣿
+⣿⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣧⣤⣤⣤⣤⣤⣤⣤⣤⡤⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⠀⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⢀⣴⣿⣿⣿⣿
+⣿⣶⣶⣶⣶⣶⣶⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣧⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣅⠀⢀⣴⣿⣿⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+EOF
+
+printf "\u001b[48;2;111;143;175m  "
+#printf "\u001b[48;2;111;143;175m  "
+printf "\u001b(B\u001b[m\u001b[38;2;111;143;175m\u001b[48;2;72;75;76m "
+printf "\u001b(B\u001b[m\u001b[38;2;72;75;76m\u001b[48;2;45;48;49m "
+printf "\u001b(B\u001b[m\u001b[38;2;199;184;157m\u001b[48;2;45;48;49m                                                                 "
+printf "\u001b(B\u001b[m\u001b[38;2;45;48;49m\u001b[48;2;34;37;38m "
+printf "\u001b(B\u001b[m\u001b[38;2;236;107;100m\u001b[48;2;34;37;38m"
+printf "\u001b(B\u001b[m\u001b[38;2;40;43;44m\u001b[48;2;236;107;100m \033[m\n\n"
+
+#printf "\t\ue7c5 NORMAL\ue0bc \ue0bc  \uf719 Empty \ue0bc \ue0b6\ue612  Bot\n\n"
+
+yes_prompt "\tDoes the font below look like the braille image above;\n\tand does the status bar below the image look correct?\n\n                                  \ue795 => \uf053 \ue62b \uf054 \n\n"
+#printf '      \ue795 => \uf053 \ue62b \uf054 \n\n'
+#printf ' Other Useful Chracters: \ue7c5 \uf74a \ue612 \n\n'
+#printf '      y|n '
+#read -n 1 -r font_test
+
+if [ "$retval" != 'y' ]; then
+	yes_prompt "\tDo you want to install a patched icon (nerd) font now?\n\n"
+	if [ "$retval" == 'y' ]; then
+		install_nerdfont
+		check_font
+	fi
+	cat <<EOF
+*******************************************************************************
+* ICONS
+*******************************************************************************
+These icons need a "Nerd Font" patched font. Download one at:
+
+	https://www.nerdfonts.com/font-downloads
+
+Extract into ~/.local/share/fonts
+
+Inside of each font package they've included ~20 different font files.
+You only need the "* Nerd Font Complete Mono Windows Compatible" files.
+
+For licensing reasons, many names are intentionally duplicated:
+
+	"Fira" -> "F*u*ra"
+	"Hermit" -> "H*u*rmit"
+	"Liberation" -> "Li*t*eration"
+	"Source Code" -> "S*a*uce Code"
+
+You can install whichever version you like, but no reason to install both.
+
+*******************************************************************************
+* BRAILE FONTS
+*******************************************************************************
+On Fedora 32 run:
+  sudo dnf install kitty gdouros-symbola-fonts
+In ~/.config/kitty/kitty.conf add:
+  symbol_map U+2800-U+28FF Symbola
+
+Install a font like ttf-symbola and 
+if you have gnu-free-fonts installed, remove it
+
+*******************************************************************************
+* LIGATURES
+*******************************************************************************
+Combining the '=' with the '>' to get one symbol uses a Unicode Ligature.
+The best terminal I know of for ligature support is kitty.
+Common l
+
+	https://erwin.co/kitty-and-nerd-fonts/
+
+If you dont like ligatures, you may perfer alacritty, as the developers
+of alacritty have rejected ligature support:
+
+	https://github.com/alacritty/alacritty/issues/50
+
+EOF
+  msg_error "Please figure out icon fonts before continuing\n\n"
+
+
+fi
+
+}
+
+function install_nerdfont() {
+	check_depends unzip curl
+	# Idea from https://gist.github.com/matthewjberger/7dd7e079f282f8138a9dc3b045ebefa0
+	fonts_dir="${HOME}/.local/share/fonts"
+	version='2.1.0'
+	fonts=(Agave CascadiaCode IBMPlexMono Cousine DaddyTimeMono 
+			DejaVuSansMono DroidSansMono FantasqueSansMono FiraCode Hack
+		   	Hermit Inconsolata JetBrainsMono Lekton LiberationMono Monofur
+		   	Monoid Mononoki RobotoMono ShareTechMono SourceCodePro SpaceMono
+		   	UbuntuMono VictorMono)
+
+	if [[ ! -d "$fonts_dir" ]]; then
+		mkdir -p "$fonts_dir"
+	fi
+
+	fuzzy_finder "${fonts[@]}"
+	if [ -n "$retval" ]; then
+		download_url="https://github.com/ryanoasis/nerd-fonts/releases/download/v${version}/${retval}.zip"
+		if [ ! -f "${SCRIPT_DIR}/${retval}.zip" ]; then
+			curl -LS "$download_url" --output "${SCRIPT_DIR}/${retval}.zip"
+		fi
+		# See: https://stackoverflow.com/questions/908679/unzip-specific-extension-only
+		#unzip -d "${fonts_dir}" -jqo "${retval}.zip" "*Nerd Font Complete*.otf"
+		unzip -jqo "${SCRIPT_DIR}/${retval}.zip" -d "${SCRIPT_DIR}/${retval}"
+		find "${SCRIPT_DIR}/${retval}" \( -iname "*Windows Compatible*" -o -iname "*Complete Mono*" \) -delete
+		cp "${SCRIPT_DIR}/${retval}"/* "${fonts_dir}"
+		fc-cache -f
+		msg_green "\nPlease change your terminal settings to activate ${retval}, new font\n\n\n"
+		exit 1
+	fi
+
+}
+
+function initialize() {
+  # Make sure all required dependencies are available
+  # git command not found
+  # docker command not found
+  # run DOCKER_SOCKET permissions check
+  if [ ! -f "$SCRIPT_DIR/.ready" ]; then
+    set +e
+    docker --version || msg_error "Docker must be installed\n\n"
+    git --version    || msg_error "Git must be installed\n\n"
+	# TODO: figure out what to do for wayland...
+	xauth -V         || msg_error "xauth must be installed\n\n"
+    check_docker
+	check_braille
+    check_font
+    set -e
+    touch "$SCRIPT_DIR/.ready"
+  fi
+
+}
+
+function get_config() {
+	readonly PROGNAME="${0##*/}"
+	SCRIPT_PATH=$(readlink -f "$0")
+	CWD=$(pwd)
+	if [ -f "$SCRIPT_DIR/config" ]; then
+		# shellcheck disable=SC1091
+		source "$SCRIPT_DIR/config"
+	fi
+	DOCKER_TAG=${docker_tag:-'nvcd'}
+	DOCKER_SOCKET=${docker_socket:-'/var/run/docker.sock'}
+	EXTRA_PACKAGES=${extra_packages:-''}
+	# TODO: Use REFRESH_SECONDS to force update ./NvConfig
+	#REFRESH_SECONDS=${refresh_time:-'86400'}
+	CONFIG_TEMPLATE=${config_template:-'https://github.com/NvChad/NvChad'}
+	USER_NAME=${user_name:-$(id -u -n)}
+	USER_ID=${user_id:-$(id -u)}
+	GROUP_ID=${group_id:-$(id -g)}
+	GROUP_NAME=${group_name:-$(id -g -n)}
+	USER_SHELL=${user_shell:-$(basename "$SHELL")}
+	set +e # in case git is not configured
+	GIT_USER_NAME=${git_user_name:-$(git config --global user.name)}
+	GIT_USER_EMAIL=${git_user_email:-$(git config --global user.email)}
+	set -e
+}
+
+function check_installed() {
+	if command -v "$PROGNAME" &> /dev/null; then
+		INSTALL_PATH=$(which "$PROGNAME")
+		INSTALL_MSG="Installed in: $INSTALL_PATH ($PROGNAME)"
+		#if command -v whereis &> /dev/null; then
+		#	INSTALL_MSG=$INSTALL_MSG 
+		#fi
+	else
+		INSTALL_MSG=$(msg_red "Not Installed. Use: $PROGNAME --install")
+	fi
+}
+
+function check_docker() {
+	if [ -S "$DOCKER_SOCKET" ]; then
+		if [ -w "$DOCKER_SOCKET" ]; then
+			DOCKER_MSG="Docker Socket $DOCKER_SOCKET exists and writable by $USER_NAME"
+		else
+			msg_error "User $USER_NAME (UID $USER_ID) can't write to $DOCKER_SOCKET\nPerhaps try:\n\tsudo usermod -a -G docker $USER_NAME\nThen log out and log in again\nOr use: 'exec newgrp docker' to apply only to current shell\n\n"
+		fi
+	else
+		msg_error "Docker Socket: $DOCKER_SOCKET - Doesnt exist or not accessible. Is Dockerd running?\n\n"
+	fi
+}
+
+function print_config() {
+	check_installed && echo "$INSTALL_MSG"
+	check_docker && echo "$DOCKER_MSG"
+	echo "Path Used to Lauch Script: $0"
+	echo "Name Used to Launch Script: $PROGNAME"
+	echo
+	echo "Path to Script: $SCRIPT_DIR"
+	echo "User:  $USER_NAME (ID: $USER_ID)"
+	echo "Group: $GROUP_NAME (ID: $GROUP_ID)"
+	echo "Shell: $USER_SHELL"
+	echo "Git Name: $GIT_USER_NAME"
+	echo "Git Email: $GIT_USER_EMAIL"
+	echo
+	echo "Extra Packages: $EXTRA_PACKAGES"
+	echo "Docket Socket: $DOCKER_SOCKET"
+	echo "Name of Docker Tag: $DOCKER_TAG"
+	docker image ls "$DOCKER_TAG"
+}
+
+function fuzzy_finder() {
+	items=("$@")
+	if command -v sk &> /dev/null; then
+		retval=$(printf "%s\n" "${items[@]}" | sk)
+	elif command -v fzy &> /dev/null; then
+		retval=$(printf "%s\n" "${items[@]}" | fzy)
+	elif command -v fzf &> /dev/null; then
+		retval=$(printf "%s\n" "${items[@]}" | fzf)
+	else
+		for each in "${items[@]}"; do
+			echo "$each"
+		done
+		read retval
+	fi
+}
+
+function msg_red() {
+    # error messages in bold/red
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[1m\033[31m"
+    printf >&2 "ERROR: $@"
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[m"
+}
+
+function msg_green() {
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[1m\033[32m"
+    printf >&2 "$@"
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[m"
+}
+
+function msg_blue() {
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[1m\033[34m"
+    printf >&2 "$@"
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[m"
+}
+
+function msg_error() {
+    msg_red "$@" && exit 1
+}
+
+function get_install_path() {
+	if [ $UID -eq 0 ]; then
+		retval="/usr/local/bin"
+	else
+		OLD_IFS=${IFS}
+		IFS=":"
+		install_paths=()
+		for dir in ${PATH}; do
+			if [ -w "$dir" ]; then
+				set +e
+				if [ ! $(git -c "$dir" rev-parse 2>/dev/null) = 0  ]; then
+					install_paths+=("$dir")
+				fi
+				set -e
+			fi
+		done
+
+		if [ ${#install_paths[@]} -eq 0 ]; then
+			msg_red "All user writable components of your \$PATH are git repos\n\n"
+			for dir in ${PATH}; do
+				if [ -w "$dir" ]; then
+					install_paths+=("$dir")
+				fi
+			done
+		fi
+		if [ ${#install_paths[@]} -eq 0 ]; then
+			msg_error "No user writable directories are in path. Install with root or update environment\n\n"
+		fi
+
+		IFS=${OLD_IFS}
+		fuzzy_finder "${install_paths[@]}"
+	fi
+
+	if [ ! -d $retval ]; then
+		msg_error "Invalid Install Path: $retval\n\n "
+	fi
+}
+
+function do_install() {
+	get_install_path
+	ln -sf "$SCRIPT_PATH" $retval
+}
+
+#
+# TODO:
+function fix_args() {
+	o_args=()
+	for arg in "${ARGV[@]}"; do
+		# shellcheck disable=SC2076,SC2199
+		if [[ ! " ${POSSIBLE_ARGS[@]} " =~ " $arg " ]]; then
+			abs_arg=$(readlink -f "$arg")
+			[[ -n $DEBUG ]] && echo "($arg) => ($abs_arg)"
+			
+			if [[ "$arg" =~ ^/.* ]]; then
+				[[ -n $DEBUG ]] && echo "ABS: '/mnt${arg}'"
+				o_args+=( "/mnt${abs_arg}" )
+			elif [[ "$arg" =~ ^../ ]]; then
+				[[ -n $DEBUG ]] && echo "REL PARENT: '$arg'"
+				o_args+=( "/mnt${abs_arg}" )
+			elif [[ "$arg" =~ /../ ]]; then
+				[[ -n $DEBUG ]] && echo "REL COMPLEX: '$arg'"
+				o_args+=( "/mnt${abs_arg}" )
+			else
+				[[ -n $DEBUG ]] && echo "REL: '$arg'"
+				o_args+=( "$arg" )
+			fi
+		fi
+	done
+	#exit
+}
+
+function do_shell() {
+	ENTRYPOINT="--entrypoint $SHELL "
+	do_run
+}
+
+function do_run() {
+	if [ ! -d "$SCRIPT_DIR/NvConfig" ]; then
+		do_build
+	fi
+	fix_args
+	#  --detach-keys "ctrl-z" \
+	# TODO: possible to block CTRL+Z? Right now CTRL+Z hangs
+	#   --sig-proxy=true -- no impact\
+	# TODO: force creation of /tmp/nvimsocket 
+	#       (/tmp/nvimsocket1 socketN for additional instances)
+	RM_IT="--rm"
+	
+	if [[ -t 0 ]]; then RM_IT="$RM_IT -i"; fi
+	if [[ -t 1 ]]; then RM_IT="$RM_IT -t"; fi
+	if [[ -n "$DEBUG" ]]; then QUIET="--quiet"; fi
+
+	if [[ -n "$LC_ALL" ]];   then LOCALE+=" -e LC_ALL "; fi
+	if [[ -n "$LC_CTYPE" ]]; then LOCALE+=" -e LC_CTYPE "; fi
+	if [[ -n "$LANG" ]];     then LOCALE+=" -e LANG "; fi
+
+	if [ "$XDG_SESSION_TYPE" == "x11" ]; then
+		XAUTH=$(mktemp -t "${DOCKER_TAG}.xauth.XXXX")
+		xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -
+		WINDOW_MANAGER+="-v /tmp/.X11-unix:/tmp/.X11-unix:rw "
+		WINDOW_MANAGER+="-v $XAUTH:$XAUTH:rw "
+		WINDOW_MANAGER+="-e QT_X11_NO_MITSHM=1 "
+		WINDOW_MANAGER+="-e DISPLAY "
+		WINDOW_MANAGER+="-e XAUTHORITY=/mnt/home/${USER_NAME}/${XAUTHORITY##*/} "
+	elif [ "$XDG_SESSION_TYPE" == "wayland" ]; then
+		WINDOW_MANAGER+="-e WAYLAND_DISPLAY "
+		WINDOW_MANAGER+="-e XDG_RUNTIME_DIR "
+		WINDOW_MANAGER+="-v $XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR:rw "
+	elif [ "$XDG_SESSION_TYPE" == "tty" ]; then
+		msg_green "Awesome! Launching in raw TTY\n"
+	elif [ -n "$XDG_SESSION_TYPE" ]; then
+		msg_error "Unknown XDG_SESSION_TYPE: $XDG_SESSION_TYPE\n\n"
+	fi
+
+	# docker run  --add-host=host.docker.internal:host-gateway \
+
+	# shellcheck disable=SC2086
+	exec docker run --init $RM_IT $QUIET $ENTRYPOINT\
+	  --net=host \
+	  --user "$USER_ID":"$GROUP_ID" \
+	  -v "$SCRIPT_DIR/NvConfig:/home/$USER_NAME/.config/nvim" \
+	  -v "$SCRIPT_DIR/cache:/home/$USER_NAME/.cache/nvim" \
+	  -v "$SCRIPT_DIR/share:/home/$USER_NAME/.local/share/nvim" \
+	  -v "$CWD:/src" \
+	  -v "/:/mnt" \
+	  -w /src \
+	  $LOCALE \
+	  $WINDOW_MANAGER \
+	  "$DOCKER_TAG" "${o_args[@]}"
+}
+
+function do_clean() {
+	clean_script_standard
+	clean_script
+}
+
+function do_config() {
+	config_script_standard
+	config_script
+}
+
+function do_kill() {
+	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
+		for process in $(docker ps -a -q --filter ancestor="$DOCKER_TAG"); do
+			docker kill "$process"
+		done
+	fi
+}
+
+function do_build() {
+	if [ $UID -eq 0 ]; then
+	    msg_error "Please don't build the image as root\n\n"
+	fi
+	cd "$SCRIPT_DIR"
+	# shellcheck disable=SC2086
+	docker build \
+	  $BUILD_ARG \
+	  --build-arg "USER_NAME=${USER_NAME}" \
+	  --build-arg "USER_SHELL=${USER_SHELL}" \
+	  --build-arg "USER_ID=${USER_ID}" \
+	  --build-arg "GROUP_ID=${GROUP_ID}" \
+	  --build-arg "GROUP_NAME=${GROUP_NAME}" \
+	  --build-arg "GIT_USER_NAME=${GIT_USER_NAME}" \
+	  --build-arg "GIT_USER_EMAIL=${GIT_USER_EMAIL}" \
+	  --build-arg "EXTRA_PACKAGES=${EXTRA_PACKAGES}" \
+	  -t "$DOCKER_TAG" .
+	cd "$CWD"
+
+	mkdir -p "$SCRIPT_DIR/cache" \
+	         "$SCRIPT_DIR/share" \
+	         "$SCRIPT_DIR/share/nvim/undo"
+
+	if [ ! -d "$SCRIPT_DIR/NvConfig" ]; then
+		mkdir -p "$SCRIPT_DIR/NvConfig"
+		cd "$SCRIPT_DIR"
+		git clone "$CONFIG_TEMPLATE" NvConfig
+		cd "$CWD"
+	else
+		cd "$SCRIPT_DIR/NvConfig" && git pull
+		touch "$SCRIPT_DIR/.nvconfig.pull"
+		cd "$CWD"
+	fi
+	do_config
+}
+
+#
+# Main switch.
+#
+# Only look for font-config stuff when not using SSH or a raw console
+# TODO: Consider OSTYPE = "darwin" or grep -qi microsoft /proc/version
+if [ -z "$SSH_CONNECTION" ] || [ "$XDG_SESSION_TYPE" != "tty" ]; then
+	check_depends docker xauth git unzip curl fc-cache fc-match
+else
+	check_depends docker xauth git unzip curl
+fi
+case "$1" in
+	"--clean")
+		get_config
+		initialize
+		do_clean
+		BUILD_ARG="--no-cache"
+		do_build
+		do_run
+		;;
+	"--help")
+		print_usage
+		;;
+	"--build")
+		get_config
+		initialize
+		do_clean
+		do_build
+		do_run
+		;;
+	"--config")
+		get_config
+		print_config
+		;;
+	"--install")
+		get_config
+		initialize
+		do_install
+		;;
+	"--kill")
+		get_config
+		do_kill
+		;;
+	"--shell")
+		get_config
+		initialize
+		do_shell
+		;;
+	*)
+		# preserve all command line arguments
+		get_config
+		initialize
+		do_run
+		;;
+esac

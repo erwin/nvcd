@@ -1,0 +1,43 @@
+# https://geekrepos.com/topics/vim-configuration
+# https://neovimcraft.com/
+
+# docker_tag="nvchad"
+# config_template="https://github.com/NvChad/NvChad.git"
+# config_script="
+#	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/ui/\";
+#	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/extensions/\";
+#	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/some/silly/shit\";
+#	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/MAX/silly/shit\";
+#" # END OF config_script
+
+# docker_tag="lunarvim"
+# config_template="https://github.com/LunarVim/LunarVim.git"
+config_script="
+	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/ui/\";
+	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/extensions/\";
+	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/some/silly/shit\";
+	mkdir -p \"$SCRIPT_DIR/share/site/pack/packer/opt/MAX/silly/shit\";
+	mkdir -p \"$SCRIPT_DIR/NvConfig/lua/custom\";
+	eval \"examples=(\$SCRIPT_DIR/NvConfig/examples/\*)\";
+	echo \$examples;
+	for f in \$examples; do
+	  echo \"f: \$f\";
+	done;
+"
+extra_packages="tree htop xauth"
+refresh_seconds=$((60 * 60))
+
+#	for f in \$examples; do
+#	  echo \"f: \$f\";
+#	done;
+
+#	cd \"$SCRIPT_DIR/NvConfig/examples\";
+#	pwd;
+#	echo cp * \"$SCRIPT_DIR/NvConfig/lua/custom\";
+#	pwd;
+#	cd \"$SCRIPT_DIR/NvConfig/lua/custom\";
+#	pwd;
+#	for f in *; do
+#	  echo ln -s \"$f\" \"$SCRIPT_DIR/\${f##*/}\";
+#	  ln -s \"$f\" \"$SCRIPT_DIR/\${f##*/}\";
+#	done;
