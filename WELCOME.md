@@ -2,13 +2,14 @@
 
 For anyone new to the `vi` world, the arrow keys and the mouse work
 here like you're used to. There is one principle to keep in mind, and
-vi will make complete sense. Unlikne basically every other text program
+vi will make complete sense. Unlike basically every other text program
 that normal people use, Vi has `modes`.
-NORMAL MODE (where you run commands - but can't type) - Every key has a command
-INSERT MODE (where you can actually type)
 
-`i`      change to `INSERT` mode (where you can actually type) wherever you are.
-`Esc`    exit `INSERT` mode and back to normal mode
+NORMAL MODE (where every key is a command - so don't type random stuff!)
+INSERT MODE (where you can actually type - input text normally)
+
+`i`      change to `INSERT` mode
+`Esc`    exit `INSERT` mode / return to `NORMAL` mode
 `:wq`    to write and quit
 `:q!`    to quit and don't save
 `/`      to start searching for something
