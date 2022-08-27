@@ -42,7 +42,7 @@ Ubuntu:
 ```
 sudo apt install fzf curl git docker.io 
 sudo usermod -a -G docker $(id -un)
-git clone github.com/erwin/nvcd
+git clone https://github.com/erwin/nvcd.git
 cd nvcd
 ./nvcd --build
 ```
