@@ -4,9 +4,8 @@
 # shellcheck disable=SC2155
 readonly SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 ARGV=("$@")
-POSSIBLE_ARGS=("--clean" "--build" "--config" "--install" "--kill" "--shell" "--help")
+POSSIBLE_ARGS=("--clean" "--build" "--config" "--install" "--kill" "--killall" "--swap" "--shell" "--help")
 #DEBUG=1
-
 
 
 function check_depends() {
@@ -30,13 +29,13 @@ function check_depends() {
 function check_environment() {
 	if [ -n "$SSH_CONNECTION" ]; then
 		echo " Connected via SSH "
-	elif [ "$XDG_SESSION_TYPE" = "tty"]; then
+	elif [ "$XDG_SESSION_TYPE" == "tty" ]; then
 		echo " Connected on console "
 	fi
 }
 
 function config_script_standard() {
-	mkdir -p "$SCRIPT_DIR/share/nvim"/{swap,undo}
+	mkdir -p "$SCRIPT_DIR/share"/{swap,undo}
 	:;
 }
 
@@ -99,6 +98,33 @@ function delete_broken_symlinks() {
 		  fi
 	  fi
 	done
+}
+
+function time_ago() {
+    local SEC_PER_MINUTE=$((60))
+    local   SEC_PER_HOUR=$((60*60))
+    local    SEC_PER_DAY=$((60*60*24))
+    local  SEC_PER_MONTH=$((60*60*24*30))
+    local   SEC_PER_YEAR=$((60*60*24*365))
+
+    local last_unix="$(date --date="$1" +%s)"    # convert date to unix timestamp
+    local now_unix="$(date +'%s')"
+
+    local delta_s=$(( now_unix - last_unix ))
+
+    if (( delta_s <  SEC_PER_MINUTE * 2)); then
+		echo $((delta_s))" seconds ago"
+    elif (( delta_s <  SEC_PER_HOUR * 2)); then
+        echo $((delta_s / SEC_PER_MINUTE))" minutes ago"
+    elif (( delta_s <  SEC_PER_DAY * 2)); then
+        echo $((delta_s / SEC_PER_HOUR))" hours ago"
+    elif (( delta_s <  SEC_PER_MONTH * 2)); then
+        echo $((delta_s / SEC_PER_DAY))" days ago"
+    elif (( delta_s <  SEC_PER_YEAR * 2)); then
+        echo $((delta_s / SEC_PER_MONTH))" months ago"
+    else
+        echo $((delta_s / SEC_PER_YEAR))" years ago"
+    fi
 }
 
 function yes_prompt() {
@@ -393,6 +419,9 @@ function print_config() {
 	echo "Path Used to Lauch Script: $0"
 	echo "Name Used to Launch Script: $PROGNAME"
 	echo
+	echo "Config Template: ${CONFIG_TEMPLATE##*/}"
+	echo "Git URL: ${CONFIG_TEMPLATE}"
+	echo
 	echo "Path to Script: $SCRIPT_DIR"
 	echo "User:  $USER_NAME (ID: $USER_ID)"
 	echo "Group: $GROUP_NAME (ID: $GROUP_ID)"
@@ -516,10 +545,49 @@ function fix_args() {
 	#exit
 }
 
-function do_shell() {
-	ENTRYPOINT="--entrypoint $SHELL "
-	do_run
+function choose_container() {
+	choose_container=()
+	for container in $(docker ps -a -q --filter ancestor="$DOCKER_TAG"); do
+		ARGS=$(docker inspect "$container" -f "{{ .Args }}")
+		STARTED=$(docker inspect "$container" -f "{{ .State.StartedAt }}")
+		WHEN=$(time_ago "$STARTED")
+		choose_container+=("$ARGS	$WHEN	/// $container")
+	done
+	if [ ${#choose_container[@]} -gt 1 ]; then
+		tabs 1,45,70
+		fuzzy_finder "${choose_container[@]}"
+		tabs -8
+	else
+		retval=${choose_container[0]}
+	fi
 }
+
+function do_shell() {
+	check_depends tabs
+	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
+		choose_container
+		exec docker exec -it ${retval##*/} "$USER_SHELL"
+	else 
+		ENTRYPOINT="--entrypoint $SHELL "
+		do_run
+	fi
+}
+
+function do_kill() {
+	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
+		choose_container
+		exec docker kill ${retval##*/}
+	fi
+}
+
+function do_killall() {
+	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
+		for process in $(docker ps -a -q --filter ancestor="$DOCKER_TAG"); do
+			docker kill "$process"
+		done
+	fi
+}
+
 
 function do_run() {
 	if [ ! -d "$SCRIPT_DIR/NvConfig" ]; then
@@ -562,7 +630,7 @@ function do_run() {
 	# docker run  --add-host=host.docker.internal:host-gateway \
 
 	# shellcheck disable=SC2086
-	exec docker run --init $RM_IT $QUIET $ENTRYPOINT\
+	docker run --init $RM_IT $QUIET $ENTRYPOINT\
 	  --net=host \
 	  --user "$USER_ID":"$GROUP_ID" \
 	  -v "$SCRIPT_DIR/NvConfig:/home/$USER_NAME/.config/nvim" \
@@ -574,6 +642,7 @@ function do_run() {
 	  $LOCALE \
 	  $WINDOW_MANAGER \
 	  "$DOCKER_TAG" "${o_args[@]}"
+	do_update_check
 }
 
 function do_clean() {
@@ -586,12 +655,14 @@ function do_config() {
 	config_script
 }
 
-function do_kill() {
-	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
-		for process in $(docker ps -a -q --filter ancestor="$DOCKER_TAG"); do
-			docker kill "$process"
-		done
-	fi
+function do_update_check() {
+	echo "TODO: is a new verion of neovim available?"
+	echo "TODO: is a new version of $config_template available?"
+}
+
+
+function do_swap() {
+	echo "TODO: list swap files..."
 }
 
 function do_build() {
@@ -615,7 +686,7 @@ function do_build() {
 
 	mkdir -p "$SCRIPT_DIR/cache" \
 	         "$SCRIPT_DIR/share" \
-	         "$SCRIPT_DIR/share/nvim/undo"
+	         "$SCRIPT_DIR/share"/{swap,undo}
 
 	if [ ! -d "$SCRIPT_DIR/NvConfig" ]; then
 		mkdir -p "$SCRIPT_DIR/NvConfig"
@@ -671,6 +742,14 @@ case "$1" in
 	"--kill")
 		get_config
 		do_kill
+		;;
+	"--killall")
+		get_config
+		do_kill
+		;;
+	"--swap")
+		get_config
+		do_swap
 		;;
 	"--shell")
 		get_config
