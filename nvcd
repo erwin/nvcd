@@ -2,9 +2,9 @@
 # vim: noai:noet:ts=4:sw=4:colorcolumn=80
 
 # shellcheck disable=SC2155
-readonly SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+readonly SCRIPT_DIR="$(dirname "$(readlink -f -- "$0")")"
 ARGV=("$@")
-POSSIBLE_ARGS=("--clean" "--build" "--config" "--install" "--kill" "--killall" "--swap" "--shell" "--help")
+NVCD_ARGS=("--cleanbuild" "--build" "--config" "--install" "--kill" "--killall" "--swap" "--shell" "--help")
 #DEBUG=1
 
 
@@ -50,15 +50,6 @@ function config_script() {
 		echo ln -sr "$SCRIPT_DIR/custom" "$SCRIPT_DIR/NvConfig/lua/custom"
 		ln -sr "$SCRIPT_DIR/custom" "$SCRIPT_DIR/NvConfig/lua/custom"
 	fi
-	#mkdir -p "$SCRIPT_DIR/share/site/pack/packer/opt/ui/"
-	#mkdir -p "$SCRIPT_DIR/share/site/pack/packer/opt/extensions/"
-	#mkdir -p "$SCRIPT_DIR/NvConfig/lua/custom"
-	#for file in "${SCRIPT_DIR}/NvConfig/examples/"/*; do
-	#	cd "${SCRIPT_DIR}/NvConfig/examples/"
-	#	cp $file "$SCRIPT_DIR/NvConfig/lua/custom"
-	#	cd "${SCRIPT_DIR}"
-	#	ln -s -f "./NvConfig/lua/custom/${file##*/}" "${file##*/}"
-	#done
 }
 
 function clean_script_standard() {
@@ -169,7 +160,7 @@ function print_usage() {
 	--build:	Builds the neovim Docker image (latest stable release)
 		+ NvChad config (head from github)
 
-	--clean:   Build but skips using the cache
+	--cleanbuild:   Build but skips using the cache
 		 run docker build --no-cache
 
 	--shell:   Launch a shell inside the container
@@ -198,7 +189,6 @@ EOF
 
 	yes_prompt "\tCan you see boxes on the left and boxes on the right?\n\n"
 	if [ "$retval" != 'y' ]; then
-		NO_BRAILE=1
 		yes_prompt "\tDo you want to install the Symbola braille font?\n\tBraille fonts also make 'gotop' look awesome!\n\n"
 		if [ "$retval" == 'y' ]; then
 			fonts_dir="${HOME}/.local/share/fonts"
@@ -366,7 +356,7 @@ function initialize() {
 
 function get_config() {
 	readonly PROGNAME="${0##*/}"
-	SCRIPT_PATH=$(readlink -f "$0")
+	SCRIPT_PATH=$(readlink -f -- "$0")
 	CWD=$(pwd)
 	if [ -f "$SCRIPT_DIR/config" ]; then
 		# shellcheck disable=SC1091
@@ -517,32 +507,45 @@ function do_install() {
 	ln -sf "$SCRIPT_PATH" $retval
 }
 
-#
-# TODO:
 function fix_args() {
 	o_args=()
 	for arg in "${ARGV[@]}"; do
 		# shellcheck disable=SC2076,SC2199
-		if [[ ! " ${POSSIBLE_ARGS[@]} " =~ " $arg " ]]; then
-			abs_arg=$(readlink -f "$arg")
-			[[ -n $DEBUG ]] && echo "($arg) => ($abs_arg)"
-			
-			if [[ "$arg" =~ ^/.* ]]; then
-				[[ -n $DEBUG ]] && echo "ABS: '/mnt${arg}'"
-				o_args+=( "/mnt${abs_arg}" )
-			elif [[ "$arg" =~ ^../ ]]; then
-				[[ -n $DEBUG ]] && echo "REL PARENT: '$arg'"
-				o_args+=( "/mnt${abs_arg}" )
-			elif [[ "$arg" =~ /../ ]]; then
-				[[ -n $DEBUG ]] && echo "REL COMPLEX: '$arg'"
-				o_args+=( "/mnt${abs_arg}" )
-			else
-				[[ -n $DEBUG ]] && echo "REL: '$arg'"
+		if [[ ! " ${NVCD_ARGS[@]} " =~ " $arg " ]]; then
+			if [[ -n "$skip_next" ]]; then
 				o_args+=( "$arg" )
+				skip_next=""
+			elif [[ -z "$force" && "$arg" =~ ^\+|^\- ]]; then
+				# after we find '--' force everything to be a filename
+				if [[ "$arg" == "--" ]]; then
+					force=1
+				# for commands, don't try to parse it as a filename
+				elif [[ "$arg" == '-c' || "$arg" == '--cmd' ]]; then
+					skip_next=1
+				fi
+				# pass through any args starting with '-' or '+' to neovim
+				o_args+=( "$arg" )
+			else
+				abs_arg=$(readlink -f -- "$arg")
+				[[ -n $DEBUG ]] && echo "($arg) => ($abs_arg)"
+				
+				if [[ "$arg" =~ ^/.* ]]; then
+					[[ -n $DEBUG ]] && echo "ABS: '/mnt${arg}'"
+					o_args+=( "/mnt${abs_arg}" )
+				elif [[ "$arg" =~ ^../ ]]; then
+					[[ -n $DEBUG ]] && echo "REL PARENT: '$arg'"
+					o_args+=( "/mnt${abs_arg}" )
+				elif [[ "$arg" =~ /../ ]]; then
+					[[ -n $DEBUG ]] && echo "REL COMPLEX: '$arg'"
+					o_args+=( "/mnt${abs_arg}" )
+				else
+					[[ -n $DEBUG ]] && echo "REL: '$arg'"
+					o_args+=( "$arg" )
+				fi
 			fi
+			prior_arg="$arg"
 		fi
 	done
-	#exit
 }
 
 function choose_container() {
@@ -568,7 +571,7 @@ function do_shell() {
 		choose_container
 		exec docker exec -it ${retval##*/} "$USER_SHELL"
 	else 
-		ENTRYPOINT="--entrypoint $SHELL "
+		ENTRYPOINT="--entrypoint $USER_SHELL "
 		do_run
 	fi
 }
@@ -634,6 +637,7 @@ function do_run() {
 	  --net=host \
 	  --user "$USER_ID":"$GROUP_ID" \
 	  -v "$SCRIPT_DIR/NvConfig:/home/$USER_NAME/.config/nvim" \
+	  -v "$SCRIPT_DIR/custom:/home/$USER_NAME/.config/custom" \
 	  -v "$SCRIPT_DIR/cache:/home/$USER_NAME/.cache/nvim" \
 	  -v "$SCRIPT_DIR/share:/home/$USER_NAME/.local/share/nvim" \
 	  -v "$CWD:/src" \
@@ -712,7 +716,7 @@ else
 	check_depends docker xauth git unzip curl
 fi
 case "$1" in
-	"--clean")
+	"--cleanbuild")
 		get_config
 		initialize
 		do_clean

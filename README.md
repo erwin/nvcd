@@ -136,7 +136,9 @@ would be faster and provide more of a host shell job control possability
 
 ### BUGS
 
-* CTRL+Z into background hangs - Disable Ctrl+z
+* Share the config for both regular user and root
+* CTRL+Z into background hangs - Disable Ctrl+z, use:
+  `vim.cmd('nnoremap <c-z> <nop>')`
 * How to make Neovim inside a Docker container compatible with `nvr` (NeoVim Remote)
 * Warning to remove directories when first starting
   (if I don't create those directories, we get an even uglier warning)
