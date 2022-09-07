@@ -28,6 +28,14 @@ nvcd "当然汉语也行.md"
 #### the tilde should be auto-expanded by nvcd
 nvcd ~/.config/kitty/kitty.conf
 
+#### filename as relative symlink should work
+mkdir -p /tmp/nvcd/{real,link}
+echo "1. hello world" > /tmp/nvcd/real/foo
+cd /tmp/nvcd/link
+ln -s ../real/foo foo
+nvcd foo
+
+
 #### Multiple files at the same time should be fine
 cd /tmp
 echo "foo,bar,baz" >> export.csv

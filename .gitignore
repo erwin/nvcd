@@ -1,4 +1,10 @@
 /.ready
+/.nvconfig.pull
+/.connects
+/.locs
+/.mirror
+/.speeds
+/.urls
 /NvConfig/
 /cache/
 /custom/

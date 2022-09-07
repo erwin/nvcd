@@ -1,10 +1,8 @@
 # NVCD NeoVim Chad (as in NvChad) for Docker
 
-DEMO:
-https://github.com/marionebl/svg-term/issues/6
-Right now, the fonts look like crap...
-Hopefully OK with FiraCode
-
+```
+<< SCREENCAST COMING SOON! >>
+```
 
 NeoVim is changing very fast, but most distros ship with old versions of 
 neovim. For example, to check the most current release:
@@ -134,9 +132,17 @@ Maybe starting one instance on first launch and using `docker exec` to connect
 would be faster and provide more of a host shell job control possability
 
 
-### BUGS
+### BUGS/ISSUES
 
-* Share the config for both regular user and root
+* Once you neovim is open, to access files in a DIFFERENT directory,
+  for example `:e ~/.profile` or `:e /etc/passwd` won't work direclty.
+  The "host" os / is available under `/mnt`, so you could do:
+  `:e /mnt/etc/passwd` and `:e /mnt/home/<name>/.profile`.
+  Files under the current folder will all work normally, and all file
+  paths when opening with `nvcd` from the shell will be auto translated.
+  We could mount the host's / to the container, but I think there are
+  many instances where this would create more confusion due to the 
+  folders excluded by bind mounts
 * CTRL+Z into background hangs - Disable Ctrl+z, use:
   `vim.cmd('nnoremap <c-z> <nop>')`
 * How to make Neovim inside a Docker container compatible with `nvr` (NeoVim Remote)

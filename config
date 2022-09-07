@@ -1,5 +1,7 @@
 # https://geekrepos.com/topics/vim-configuration
+# https://geekrepos.com/topics/neovim-configuration
 # https://neovimcraft.com/
+# https://github.com/spf13/spf13-vim
 
 # docker_tag="nvchad"
 # config_template="https://github.com/NvChad/NvChad.git"
@@ -25,7 +27,9 @@ config_script="
 	done;
 "
 extra_packages="tree htop xauth"
-refresh_seconds=$((60 * 60))
+user_shell="elvish"
+docker_update_seconds=$((60 * 60))
+git_update_seconds=$((60 * 30))
 
 #	for f in \$examples; do
 #	  echo \"f: \$f\";
@@ -41,3 +45,4 @@ refresh_seconds=$((60 * 60))
 #	  echo ln -s \"$f\" \"$SCRIPT_DIR/\${f##*/}\";
 #	  ln -s \"$f\" \"$SCRIPT_DIR/\${f##*/}\";
 #	done;
+

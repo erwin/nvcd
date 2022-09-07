@@ -1,12 +1,12 @@
 #!/bin/bash -e
-# vim: noai:noet:ts=4:sw=4:colorcolumn=80
+# vim: noai:noet:ts=2:sw=2:colorcolumn=80
 
 # shellcheck disable=SC2155
-readonly SCRIPT_DIR="$(dirname "$(readlink -f -- "$0")")"
-ARGV=("$@")
-NVCD_ARGS=("--cleanbuild" "--build" "--config" "--install" "--kill" "--killall" "--swap" "--shell" "--help")
 #DEBUG=1
-
+SCRIPT_DIR="$(dirname "$(readlink -f -- "$0")")"
+ARGV=("$@")
+NVCD_ARGS=("--cleanbuild" "--build" "--config" "--update" "--install"
+					 "--kill" "--killall" "--shell" "--help")
 
 function check_depends() {
 	for app in $* ; do
@@ -14,7 +14,6 @@ function check_depends() {
 			not_available+=("${app}")
 		fi
 	done
-
 
 	if (( ${#not_available[@]} > 0)); then
 		err="Please first install missing dependencies:\n"
@@ -92,29 +91,43 @@ function delete_broken_symlinks() {
 }
 
 function time_ago() {
+    local now_unix="$(date +'%s')"
     local SEC_PER_MINUTE=$((60))
     local   SEC_PER_HOUR=$((60*60))
     local    SEC_PER_DAY=$((60*60*24))
     local  SEC_PER_MONTH=$((60*60*24*30))
     local   SEC_PER_YEAR=$((60*60*24*365))
 
-    local last_unix="$(date --date="$1" +%s)"    # convert date to unix timestamp
-    local now_unix="$(date +'%s')"
 
-    local delta_s=$(( now_unix - last_unix ))
+    #local last_unix="$(date --date="$1" +%s)"    # convert date to unix timestamp
+	if [[ "$1" =~ ^\-(.*) ]]; then
+		local delta_s="${BASH_REMATCH[1]}"
+		local suffix="ago"
+	elif [[ "$1" =~ ^\+(.*) ]]; then
+		local delta_s="${BASH_REMATCH[1]}"
+		local suffix="later"
+	else
+		if [[ "$1" -gt $now_unix ]]; then
+			local suffix="later"
+			local delta_s=$(( $1 - $now_unix ))
+		else
+			local suffix="ago"
+			local delta_s=$(( $now_unix - $1 ))
+		fi
+	fi
 
     if (( delta_s <  SEC_PER_MINUTE * 2)); then
-		echo $((delta_s))" seconds ago"
+		echo $((delta_s))" seconds $suffix"
     elif (( delta_s <  SEC_PER_HOUR * 2)); then
-        echo $((delta_s / SEC_PER_MINUTE))" minutes ago"
+        echo $((delta_s / SEC_PER_MINUTE))" minutes $suffix"
     elif (( delta_s <  SEC_PER_DAY * 2)); then
-        echo $((delta_s / SEC_PER_HOUR))" hours ago"
+        echo $((delta_s / SEC_PER_HOUR))" hours $suffix"
     elif (( delta_s <  SEC_PER_MONTH * 2)); then
         echo $((delta_s / SEC_PER_DAY))" days ago"
     elif (( delta_s <  SEC_PER_YEAR * 2)); then
-        echo $((delta_s / SEC_PER_MONTH))" months ago"
+        echo $((delta_s / SEC_PER_MONTH))" months $suffix"
     else
-        echo $((delta_s / SEC_PER_YEAR))" years ago"
+        echo $((delta_s / SEC_PER_YEAR))" years $suffix"
     fi
 }
 
@@ -331,7 +344,73 @@ function install_nerdfont() {
 		msg_green "\nPlease change your terminal settings to activate ${retval}, new font\n\n\n"
 		exit 1
 	fi
+}
 
+function check_mirror() {
+	if [ -f "$SCRIPT_DIR/.mirror" ]; then
+		MIRROR_URL=$(<"$SCRIPT_DIR/.mirror")
+	else
+		index="current/x86_64-repodata"
+		urls=()
+		locs=()
+		speeds=()
+		connects=()
+
+		if [ ! -f "$SCRIPT_DIR/.urls" ]; then
+			echo "Getting list of Mirrors from Github"
+			curl_out=$(curl --url "https://github.com/void-linux/void-docs/raw/master/src/xbps/repositories/mirrors/index.md" \
+									--location --progress-bar)
+			while [[ $curl_out =~ \<(https?://[^\>]+)\>[[:space:]]*$'|'[[:space:]]*([^$'|']*)[[:space:]]*$'|' ]]; do
+				curl_out=${curl_out#*${BASH_REMATCH[0]}};
+				urls+=("${BASH_REMATCH[1]}")
+				locs+=("${BASH_REMATCH[2]}")
+			done
+
+			for ((idx=0; idx<${#urls[@]}; ++idx)); do
+				echo "$(( $idx + 1 )) of ${#urls[@]}: ${urls[idx]} => ${locs[idx]}"
+				set +e
+				curl_out=$(curl --url "${urls[idx]}/$index" \
+										--no-show-error \
+										--connect-timeout 1 --max-time 4 --progress-bar \
+										--write-out "%{time_appconnect}\t%{speed_download}" \
+										--output /dev/null)
+				#						--speed-limit $(( 1024 * 1024 )) \
+				set -e
+				if [ $? -eq 0 ]; then
+					connects[$idx]="${curl_out%$'\t'*}"
+					speeds[$idx]="${curl_out#*$'\t'}"
+				fi
+			done
+			# TODO: improve basic caching in case we have an error with the 
+			#       sorting or selection of speed/mirror values
+			printf "%s\n" "${urls[@]}" > "$SCRIPT_DIR/.urls"
+			printf "%s\n" "${locs[@]}" > "$SCRIPT_DIR/.locs"
+			printf "%s\n" "${speeds[@]}" > "$SCRIPT_DIR/.speeds"
+			printf "%s\n" "${connects[@]}" > "$SCRIPT_DIR/.connects"
+		else 
+			readarray -t urls <"$SCRIPT_DIR/.urls"
+			readarray -t locs <"$SCRIPT_DIR/.locs"
+			readarray -t speeds <"$SCRIPT_DIR/.speeds"
+			readarray -t connects <"$SCRIPT_DIR/.connects"
+		fi
+
+		readarray -t speed_sorted_idx < <(echo "${speeds[@]}" | tr ' ' '\n' | cat --number | sort --numeric-sort --reverse --key=+2 | cut -f1)
+
+		for ((idx=0; idx<${#speed_sorted_idx[@]}; ++idx)); do
+			spd_idx=$(( ${speed_sorted_idx[$idx]} - 1))
+			choose_mirror+=("$( printf "%2d" $(( $idx + 1 )) ):	$( printf "%8d" ${speeds[$spd_idx]} )	${locs[$spd_idx]}	# ${urls[$spd_idx]}")
+		done
+
+		if [ ${#choose_mirror[@]} -gt 1 ]; then
+			tabs 5,15,35,45
+			fuzzy_finder "${choose_mirror[@]}"
+			if [[ $? -eq 0 && -n "$retval" ]]; then
+				MIRROR_URL="${retval##*#}/current/"
+				echo ${retval##*#} > "$SCRIPT_DIR/.mirror"
+			fi
+			tabs -8
+		fi
+	fi
 }
 
 function initialize() {
@@ -343,11 +422,11 @@ function initialize() {
     set +e
     docker --version || msg_error "Docker must be installed\n\n"
     git --version    || msg_error "Git must be installed\n\n"
-	# TODO: figure out what to do for wayland...
-	xauth -V         || msg_error "xauth must be installed\n\n"
+		xauth -V         || msg_error "xauth must be installed\n\n"
     check_docker
-	check_braille
+		check_braille
     check_font
+		check_mirror
     set -e
     touch "$SCRIPT_DIR/.ready"
   fi
@@ -355,7 +434,7 @@ function initialize() {
 }
 
 function get_config() {
-	readonly PROGNAME="${0##*/}"
+	PROGNAME="${0##*/}"
 	SCRIPT_PATH=$(readlink -f -- "$0")
 	CWD=$(pwd)
 	if [ -f "$SCRIPT_DIR/config" ]; then
@@ -365,8 +444,6 @@ function get_config() {
 	DOCKER_TAG=${docker_tag:-'nvcd'}
 	DOCKER_SOCKET=${docker_socket:-'/var/run/docker.sock'}
 	EXTRA_PACKAGES=${extra_packages:-''}
-	# TODO: Use REFRESH_SECONDS to force update ./NvConfig
-	#REFRESH_SECONDS=${refresh_time:-'86400'}
 	CONFIG_TEMPLATE=${config_template:-'https://github.com/NvChad/NvChad'}
 	USER_NAME=${user_name:-$(id -u -n)}
 	USER_ID=${user_id:-$(id -u)}
@@ -377,6 +454,15 @@ function get_config() {
 	GIT_USER_NAME=${git_user_name:-$(git config --global user.name)}
 	GIT_USER_EMAIL=${git_user_email:-$(git config --global user.email)}
 	set -e
+
+	DOCKER_UPDATE_SECONDS=${docker_update_seconds:-'86400'}
+	GIT_UPDATE_SECONDS=${git_update_seconds:-'86400'}
+	if [ -f "$SCRIPT_DIR/.ready" ]; then
+		DOCKER_LAST_UPDATE=$(date -r "$SCRIPT_DIR/.ready" +"%s")
+	fi
+	if [ -f "$SCRIPT_DIR/.nvconfig.pull" ]; then
+		GIT_LAST_UPDATE=$(date -r "$SCRIPT_DIR/.nvconfig.pull" +"%s")
+	fi
 }
 
 function check_installed() {
@@ -422,6 +508,12 @@ function print_config() {
 	echo "Extra Packages: $EXTRA_PACKAGES"
 	echo "Docket Socket: $DOCKER_SOCKET"
 	echo "Name of Docker Tag: $DOCKER_TAG"
+	echo 
+	echo "Docker Update Seconds: ${DOCKER_UPDATE_SECONDS} sec == $(time_ago "+$DOCKER_UPDATE_SECONDS")"
+	echo "Git Update Seconds:    ${GIT_UPDATE_SECONDS} sec == $(time_ago "+$GIT_UPDATE_SECONDS")"
+	echo "Last Update:    Docker ($(time_ago $DOCKER_LAST_UPDATE)) Git ($(time_ago $GIT_LAST_UPDATE))"
+	echo "Next Update:    Docker ($(time_ago $(( $DOCKER_LAST_UPDATE + $DOCKER_UPDATE_SECONDS )) ))   Git ($(time_ago $(( $GIT_LAST_UPDATE + $GIT_UPDATE_SECONDS )) ))"
+	echo
 	docker image ls "$DOCKER_TAG"
 }
 
@@ -526,10 +618,14 @@ function fix_args() {
 				# pass through any args starting with '-' or '+' to neovim
 				o_args+=( "$arg" )
 			else
+				# arg should be an actual filename
 				abs_arg=$(readlink -f -- "$arg")
 				[[ -n $DEBUG ]] && echo "($arg) => ($abs_arg)"
 				
-				if [[ "$arg" =~ ^/.* ]]; then
+				if [[ -L "$arg" ]]; then
+					[[ -n $DEBUG ]] && echo "SYMLINK TO: '/mnt${abs_arg}'"
+					o_args+=( "/mnt${abs_arg}" )
+				elif [[ "$arg" =~ ^/.* ]]; then
 					[[ -n $DEBUG ]] && echo "ABS: '/mnt${arg}'"
 					o_args+=( "/mnt${abs_arg}" )
 				elif [[ "$arg" =~ ^../ ]]; then
@@ -543,17 +639,17 @@ function fix_args() {
 					o_args+=( "$arg" )
 				fi
 			fi
-			prior_arg="$arg"
 		fi
 	done
 }
 
 function choose_container() {
 	choose_container=()
-	for container in $(docker ps -a -q --filter ancestor="$DOCKER_TAG"); do
+	for container in $(docker ps -q --filter ancestor="$DOCKER_TAG"); do
 		ARGS=$(docker inspect "$container" -f "{{ .Args }}")
 		STARTED=$(docker inspect "$container" -f "{{ .State.StartedAt }}")
-		WHEN=$(time_ago "$STARTED")
+		# local last_unix="$(date --date="$1" +%s)"    # convert date to unix timestamp
+		WHEN=$(time_ago $(date --date="$STARTED" +%s))
 		choose_container+=("$ARGS	$WHEN	/// $container")
 	done
 	if [ ${#choose_container[@]} -gt 1 ]; then
@@ -567,7 +663,7 @@ function choose_container() {
 
 function do_shell() {
 	check_depends tabs
-	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
+	if [ -n "$(docker ps -q --filter ancestor="$DOCKER_TAG")" ]; then
 		choose_container
 		exec docker exec -it ${retval##*/} "$USER_SHELL"
 	else 
@@ -577,14 +673,14 @@ function do_shell() {
 }
 
 function do_kill() {
-	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
+	if [ -n "$(docker ps -q --filter ancestor="$DOCKER_TAG")" ]; then
 		choose_container
 		exec docker kill ${retval##*/}
 	fi
 }
 
 function do_killall() {
-	if [ -n "$(docker ps -a -q --filter ancestor="$DOCKER_TAG")" ]; then
+	if [ -n "$(docker ps -q --filter ancestor="$DOCKER_TAG")" ]; then
 		for process in $(docker ps -a -q --filter ancestor="$DOCKER_TAG"); do
 			docker kill "$process"
 		done
@@ -606,7 +702,6 @@ function do_run() {
 	
 	if [[ -t 0 ]]; then RM_IT="$RM_IT -i"; fi
 	if [[ -t 1 ]]; then RM_IT="$RM_IT -t"; fi
-	if [[ -n "$DEBUG" ]]; then QUIET="--quiet"; fi
 
 	if [[ -n "$LC_ALL" ]];   then LOCALE+=" -e LC_ALL "; fi
 	if [[ -n "$LC_CTYPE" ]]; then LOCALE+=" -e LC_CTYPE "; fi
@@ -633,20 +728,26 @@ function do_run() {
 	# docker run  --add-host=host.docker.internal:host-gateway \
 
 	# shellcheck disable=SC2086
-	docker run --init $RM_IT $QUIET $ENTRYPOINT\
+	docker run --init $RM_IT $ENTRYPOINT\
 	  --net=host \
 	  --user "$USER_ID":"$GROUP_ID" \
+	  -v "/etc/passwd:/etc/passwd" \
+	  -v "/etc/group:/etc/group" \
+	  -v "$SCRIPT_DIR:/nvcd" \
 	  -v "$SCRIPT_DIR/NvConfig:/home/$USER_NAME/.config/nvim" \
 	  -v "$SCRIPT_DIR/custom:/home/$USER_NAME/.config/custom" \
 	  -v "$SCRIPT_DIR/cache:/home/$USER_NAME/.cache/nvim" \
 	  -v "$SCRIPT_DIR/share:/home/$USER_NAME/.local/share/nvim" \
+	  -v "$SCRIPT_DIR/NvConfig:/root/.config/nvim" \
+	  -v "$SCRIPT_DIR/custom:/root/.config/custom" \
+	  -v "${DOCKER_TAG}-home:/home" \
+	  -v "${DOCKER_TAG}-root:/root" \
 	  -v "$CWD:/src" \
 	  -v "/:/mnt" \
 	  -w /src \
 	  $LOCALE \
 	  $WINDOW_MANAGER \
 	  "$DOCKER_TAG" "${o_args[@]}"
-	do_update_check
 }
 
 function do_clean() {
@@ -659,14 +760,47 @@ function do_config() {
 	config_script
 }
 
-function do_update_check() {
-	echo "TODO: is a new verion of neovim available?"
-	echo "TODO: is a new version of $config_template available?"
+function do_docker_update() {
+	docker run --init --entrypoint /bin/bash \
+	  --net=host \
+	  --user "$USER_ID":"$GROUP_ID" \
+	  -v "/etc/passwd:/etc/passwd" \
+	  -v "/etc/group:/etc/group" \
+	  -v "$SCRIPT_DIR:/nvcd" \
+	  -v "$CWD:/src" \
+	  -v "/:/mnt" \
+	  -w /src \
+	  "$DOCKER_TAG" /nvcd/update-query
+
+	if [ $? -eq 0 ]; then
+	   touch "$SCRIPT_DIR/.ready"
+	else
+		warn "Possible Problem Checking for Update: $0"
+	fi
+}
+
+function do_git_update() {
+	if [ ! -d "$SCRIPT_DIR/NvConfig" ]; then
+		mkdir -p "$SCRIPT_DIR/NvConfig"
+		cd "$SCRIPT_DIR"
+		git clone "$CONFIG_TEMPLATE" NvConfig
+		cd "$CWD"
+	else
+		cd "$SCRIPT_DIR/NvConfig" && git pull
+		cd "$CWD"
+	fi
+	touch "$SCRIPT_DIR/.nvconfig.pull"
 }
 
 
-function do_swap() {
-	echo "TODO: list swap files..."
+
+function do_update_check() {
+	if [[ "$(($DOCKER_LAST_UPDATE + $DOCKER_UPDATE_SECONDS))" -lt $EPOCHSECONDS ]]; then
+		do_docker_update
+	fi
+	if [[ $(($GIT_LAST_UPDATE + $GIT_UPDATE_SECONDS)) -lt $EPOCHSECONDS ]]; then
+		do_git_update
+	fi
 }
 
 function do_build() {
@@ -685,23 +819,28 @@ function do_build() {
 	  --build-arg "GIT_USER_NAME=${GIT_USER_NAME}" \
 	  --build-arg "GIT_USER_EMAIL=${GIT_USER_EMAIL}" \
 	  --build-arg "EXTRA_PACKAGES=${EXTRA_PACKAGES}" \
+		--build-arg "MIRROR_URL=${MIRROR_URL}" \
 	  -t "$DOCKER_TAG" .
 	cd "$CWD"
+    touch "$SCRIPT_DIR/.ready"
 
 	mkdir -p "$SCRIPT_DIR/cache" \
 	         "$SCRIPT_DIR/share" \
 	         "$SCRIPT_DIR/share"/{swap,undo}
 
-	if [ ! -d "$SCRIPT_DIR/NvConfig" ]; then
-		mkdir -p "$SCRIPT_DIR/NvConfig"
-		cd "$SCRIPT_DIR"
-		git clone "$CONFIG_TEMPLATE" NvConfig
-		cd "$CWD"
-	else
-		cd "$SCRIPT_DIR/NvConfig" && git pull
-		touch "$SCRIPT_DIR/.nvconfig.pull"
-		cd "$CWD"
-	fi
+	do_git_update
+
+	# if [ ! -d "$SCRIPT_DIR/NvConfig" ]; then
+	# 	mkdir -p "$SCRIPT_DIR/NvConfig"
+	# 	cd "$SCRIPT_DIR"
+	# 	git clone "$CONFIG_TEMPLATE" NvConfig
+	# 	cd "$CWD"
+	# else
+	# 	cd "$SCRIPT_DIR/NvConfig" && git pull
+	# 	cd "$CWD"
+	# fi
+	# touch "$SCRIPT_DIR/.nvconfig.pull"
+
 	do_config
 }
 
@@ -717,6 +856,7 @@ else
 fi
 case "$1" in
 	"--cleanbuild")
+		rm -f "$SCRIPT_DIR/.ready" "$SCRIPT_DIR/.mirror" "$SCRIPT_DIR/.urls"
 		get_config
 		initialize
 		do_clean
@@ -724,15 +864,16 @@ case "$1" in
 		do_build
 		do_run
 		;;
-	"--help")
-		print_usage
-		;;
 	"--build")
 		get_config
 		initialize
 		do_clean
 		do_build
 		do_run
+		;;
+	"--help")
+		get_config
+		print_usage
 		;;
 	"--config")
 		get_config
@@ -751,19 +892,24 @@ case "$1" in
 		get_config
 		do_kill
 		;;
-	"--swap")
-		get_config
-		do_swap
-		;;
 	"--shell")
 		get_config
 		initialize
 		do_shell
+		;;
+	"--update")
+		get_config
+		do_docker_update
+		do_git_update
+		;;
+	"--nop")
+		get_config
 		;;
 	*)
 		# preserve all command line arguments
 		get_config
 		initialize
 		do_run
+		[ $? -eq 0 ] && do_update_check
 		;;
 esac
