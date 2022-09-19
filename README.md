@@ -155,3 +155,4 @@ would be faster and provide more of a host shell job control possability
 * https://stackoverflow.com/a/55763212/6310966
 * http://wiki.ros.org/docker/Tutorials/GUI
 * https://riptutorial.com/docker/example/21831/running-gui-apps-in-a-linux-container
+* https://grafana.s.voidlinux.org/d/cLraC-XMk/mirrors-status
