@@ -176,6 +176,8 @@ function print_usage() {
 	--cleanbuild:   Build but skips using the cache
 		 run docker build --no-cache
 
+	--update:   Neovim binary and config template
+
 	--shell:   Launch a shell inside the container
 		 Useful for troubleshooting/customizing Dockerfile
 	
@@ -346,6 +348,8 @@ function install_nerdfont() {
 	fi
 }
 
+# void-linux/xbps mirrors are all synced within 24-hours of the master
+# See: https://grafana.s.voidlinux.org/d/cLraC-XMk/mirrors-status
 function check_mirror() {
 	if [ -f "$SCRIPT_DIR/.mirror" ]; then
 		MIRROR_URL=$(<"$SCRIPT_DIR/.mirror")
@@ -775,7 +779,7 @@ function do_docker_update() {
 	if [ $? -eq 0 ]; then
 	   touch "$SCRIPT_DIR/.ready"
 	else
-		warn "Possible Problem Checking for Update: $0"
+		msg_error "Possible Problem Checking for Update: $0"
 	fi
 }
 
