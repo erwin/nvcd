@@ -62,12 +62,14 @@ function clean_script_standard() {
 
 	rm -fvR "$SCRIPT_DIR/cache"
 
-	if [ -z "$(git -C "$SCRIPT_DIR/NvConfig" status --porcelain)" ]; then
-		rm -fvR "$SCRIPT_DIR/NvConfig"
-	else
-		cd "$SCRIPT_DIR/NvConfig"
-		git status
-		msg_error "NvConfig has local changes - Please copy somewhere \n\n"
+	if [ -d "$SCRIPT_DIR/NvConfig" ]; then
+		if [ -z "$(git -C "$SCRIPT_DIR/NvConfig" status --porcelain)" ]; then
+			rm -fvR "$SCRIPT_DIR/NvConfig"
+		else
+			cd "$SCRIPT_DIR/NvConfig"
+			git status
+			msg_error "NvConfig has local changes - Please copy somewhere \n\n"
+		fi
 	fi
 }
 
@@ -410,7 +412,7 @@ function check_mirror() {
 			fuzzy_finder "${choose_mirror[@]}"
 			if [[ $? -eq 0 && -n "$retval" ]]; then
 				MIRROR_URL="${retval##*#}/current/"
-				echo ${retval##*#} > "$SCRIPT_DIR/.mirror"
+				echo $MIRROR_URL > "$SCRIPT_DIR/.mirror"
 			fi
 			tabs -8
 		fi
@@ -430,11 +432,10 @@ function initialize() {
     check_docker
 		check_braille
     check_font
-		check_mirror
     set -e
     touch "$SCRIPT_DIR/.ready"
   fi
-
+	check_mirror
 }
 
 function get_config() {
@@ -730,6 +731,7 @@ function do_run() {
 	fi
 
 	# docker run  --add-host=host.docker.internal:host-gateway \
+	#  -v "$SCRIPT_DIR/cache:/home/$USER_NAME/.cache/nvim" \
 
 	# shellcheck disable=SC2086
 	docker run --init $RM_IT $ENTRYPOINT\
@@ -740,7 +742,8 @@ function do_run() {
 	  -v "$SCRIPT_DIR:/nvcd" \
 	  -v "$SCRIPT_DIR/NvConfig:/home/$USER_NAME/.config/nvim" \
 	  -v "$SCRIPT_DIR/custom:/home/$USER_NAME/.config/custom" \
-	  -v "$SCRIPT_DIR/cache:/home/$USER_NAME/.cache/nvim" \
+	  -v "$SCRIPT_DIR/cache:/home/$USER_NAME/.cache" \
+	  -v "$SCRIPT_DIR/local:/home/$USER_NAME/.local" \
 	  -v "$SCRIPT_DIR/share:/home/$USER_NAME/.local/share/nvim" \
 	  -v "$SCRIPT_DIR/NvConfig:/root/.config/nvim" \
 	  -v "$SCRIPT_DIR/custom:/root/.config/custom" \
@@ -813,7 +816,9 @@ function do_build() {
 	fi
 	cd "$SCRIPT_DIR"
 	# shellcheck disable=SC2086
+	echo "MIRROR_URL: $MIRROR_URL"
 	docker build \
+		--progress=plain \
 	  $BUILD_ARG \
 	  --build-arg "USER_NAME=${USER_NAME}" \
 	  --build-arg "USER_SHELL=${USER_SHELL}" \
@@ -825,10 +830,16 @@ function do_build() {
 	  --build-arg "EXTRA_PACKAGES=${EXTRA_PACKAGES}" \
 		--build-arg "MIRROR_URL=${MIRROR_URL}" \
 	  -t "$DOCKER_TAG" .
+
+	if [ $? -ne 0 ]; then
+		msg_error "docker build failed. Try: nvcd --cleanbuild"
+	fi
+
 	cd "$CWD"
-    touch "$SCRIPT_DIR/.ready"
+	  touch "$SCRIPT_DIR/.ready"
 
 	mkdir -p "$SCRIPT_DIR/cache" \
+	         "$SCRIPT_DIR/local" \
 	         "$SCRIPT_DIR/share" \
 	         "$SCRIPT_DIR/share"/{swap,undo}
 

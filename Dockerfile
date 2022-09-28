@@ -11,9 +11,6 @@ ARG GIT_USER_EMAIL
 ARG MIRROR_URL
 ARG EXTRA_PACKAGES
 
-#RUN echo "FOO is $foo"
-#RUN baz="something" && echo $baz
-
 #RUN SHELL_PATH=$(head -n 1 /etc/shells) &&\
 #    useradd --shell $SHELL_PATH --uid 1000 foo
 
@@ -21,7 +18,7 @@ RUN mkdir -p /etc/xbps.d/ && \
     echo "repository=$MIRROR_URL" > \
     /etc/xbps.d/00-repository-main.conf
 
-RUN xbps-install -Sy -y
+RUN xbps-install -S -y
 RUN xbps-install -u xbps -y
 RUN xbps-install $USER_SHELL $EXTRA_PACKAGES \
   tini \
