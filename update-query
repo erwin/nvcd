@@ -1,0 +1,85 @@
+#!/bin/bash
+
+### NOTE: This script runs inside of the container rather
+###       than directly on your host machine
+
+ARG="$1"
+local_version=''
+local_revision=''
+github_version=''
+github_revision=''
+
+function msg_warn() {
+  msg_red "WARN: $@"
+}
+
+function msg_error() {
+    msg_red "ERROR: $@" && exit 1
+}
+
+function msg_red() {
+    # error messages in bold/red
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[1m\033[31m"
+    printf >&2 "$@"
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[m"
+}
+
+function msg_green() {
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[1m\033[32m"
+    printf >&2 "$@"
+    [ -n "$NOCOLORS" ] || printf >&2 "\033[m"
+}
+
+
+function local_version() {
+  pkg_name=${ARG:-'neovim'}
+  query_out=$(xbps-query ${pkg_name}|grep '^pkgver:')
+
+  if [[ "$query_out" =~ ^pkgver:\ $pkg_name-([^_]+)(_([[:digit:]]+))? ]]; then
+    local_version=${BASH_REMATCH[1]}
+    local_revision=${BASH_REMATCH[3]}
+  fi
+}
+
+function github_version() {
+  curl_out=$(curl -LSs "https://github.com/void-linux/void-packages/raw/master/srcpkgs/${pkg_name}/template"|grep '^pkgname=\|^version=\|^revision=\|^checksum=')
+  if [[ ! "$curl_out" =~ pkgname\=$pkgname ]]; then
+    msg_error "Sanity Check Failed. Local $pkg_name value from github template: $curl_out"
+  fi
+  if [[ "$curl_out" =~ version\=([^$'\n']*)$'\n' ]]; then
+    github_version="${BASH_REMATCH[1]}"
+  else
+    msg_error "Failed to find 'version' field in github template for ${pkg_name}"
+  fi
+  if [[ "$curl_out" =~ revision\=([^$'\n']*)$'\n' ]]; then
+    github_revision="${BASH_REMATCH[1]}"
+  else
+    msg_error "Failed to find 'revision' field in github template for ${pkg_name}"
+  fi
+  if [[ "$curl_out" =~ checksum\=([^$'\n']*)$ ]]; then
+    github_checksum="${BASH_REMATCH[1]}"
+  else
+    msg_error "Failed to find 'checksum' field in github template for ${pkg_name}"
+  fi
+}
+
+function print_versions() {
+  echo "Current Local Version:  ${local_version}_${local_revision}  => Github Version: ${github_version}_${github_revision}\n\n"
+}
+
+function xbps_check() {
+  xbps_out=$(xbps-install --memory-sync --dry-run --update | grep -cq "^${pkg_name}-[[:digit:]]")
+  if [ "$?" -eq 0 ]; then
+    msg_green "$(print_versions)"
+    msg_green "UPDATE for ${pkg_name} ready: PLEASE RUN\n\tnvcd --cleanbuild\n\n"
+  else
+    msg_warn "Update for ${pkg_name} coming soon. Not yet available on your mirror\n\n"
+  fi
+}
+
+local_version
+github_version
+
+if [[ "$local_version" != "$github_version" || "$local_revision" != "$github_revision" ]]; then
+  xbps_check
+fi
