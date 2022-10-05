@@ -180,6 +180,8 @@ function print_usage() {
 
 	--update:   Neovim binary and config template
 
+  --mirror:  Locate the fastest public mirror
+
 	--shell:   Launch a shell inside the container
 		 Useful for troubleshooting/customizing Dockerfile
 	
@@ -871,7 +873,8 @@ else
 fi
 case "$1" in
 	"--cleanbuild")
-		rm -f "$SCRIPT_DIR/.ready" "$SCRIPT_DIR/.mirror" "$SCRIPT_DIR/.urls"
+		#rm -f "$SCRIPT_DIR/.ready" "$SCRIPT_DIR/.mirror" "$SCRIPT_DIR/.urls"
+		rm -f "$SCRIPT_DIR/.ready"
 		get_config
 		initialize
 		do_clean
@@ -889,6 +892,11 @@ case "$1" in
 	"--help")
 		get_config
 		print_usage
+		;;
+	"--mirror")
+		rm -f "$SCRIPT_DIR/.mirror" "$SCRIPT_DIR/.urls"
+		get_config
+		check_mirror
 		;;
 	"--config")
 		get_config
