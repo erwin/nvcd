@@ -1,5 +1,16 @@
 # NVCD NeoVim Chad (as in NvChad) for Docker
 
+## Keep Learning
+Even if you're a very experienced vim user, neovim is different.
+To learn how to setup your own very functional neovim configuration
+line by line, you should spend 75 minutes watching this screencast:
+
+https://www.youtube.com/watch?v=vdn_pKJUda8
+
+Which is in turn based on the much longer NeoVim from Scratch video series:
+
+https://www.youtube.com/playlist?list=PLhoH5vyxr6Qq41NFL4GvhFp-WLd5xzIzZ
+
 ```
 << SCREENCAST COMING SOON! >>
 ```

@@ -18,27 +18,93 @@ RUN mkdir -p /etc/xbps.d/ && \
     echo "repository=$MIRROR_URL" > \
     /etc/xbps.d/00-repository-main.conf
 
+RUN echo "$USER_NAME ALL=(ALL) NOPASSWD: ALL" >> \
+    /etc/sudoers
+
+# apparently rust-analyzer requires:
+# rustup component add rust-src
+# but rustup must be installed manually
+# 
+# xbps-install \
+#  rust-analyzer rust-std rustup rust cargo \
+#  rustup rust-analyzer \
+
+# Search for Void Packages at:
+#   https://voidlinux.org/packages/
+
 RUN xbps-install -S -y
 RUN xbps-install -u xbps -y
 RUN xbps-install $USER_SHELL $EXTRA_PACKAGES \
   tini \
   glibc-locales \
-  neovim  lua-language-server \
-  xclip wl-clipboard git nodejs tree-sitter-devel ripgrep \
-  bash curl \
+  xclip wl-clipboard \
+  bash \
+  curl \
+  wget \
+  sudo \
   wmii \
-  base-devel -y
+  git \
+  ripgrep fd \
+  base-devel \
+  neovim  \
+  tree-sitter-devel \
+  \
+  \
+  bash shellcheck \
+  lua lua-language-server luarocks \
+  nodejs \
+  go gopls  \
+  clang libstdc++-devel \
+  rust rust-analyzer rust-std cargo \
+  ruby \
+  php composer \
+  python3 python3-pip \
+  openjdk \
+  -y
 
 # tini: basic init process for docker containers
+# glibc-locales: required to set the locale on command line and pass locale to neovim 
+# xclip wl-clipboard: x11 clipboard and wayland clipboard utilities
 # bash and curl: used to poll github/xbps for new neovim relases
-# glibc-locales: required to set the locale on command line and to give neovim 
+# wget: optional complement to curl
+# sudo: optional - helps inside shell to manually add additional packages
+# wmii: supplies dependencies for winvim (libxrandr, libXft, libXinerama) I don't think needed for general users
+# ripgrep and fd: better grep, and rust alternative to find - used by neovim
+# base-devel: gcc and related build tools for compiling (could it be optional?)
 # neovim: the whole point of this container
+# tree-sitter-devel: required to build tree-sitter
+# lua-language-server: sumneko/lua-language-server
+# luarocks: Package management for Lua modules
+
+# Note:
 # lua-language-server, xclip, wl-clipboard, git, nodejs, tree-sitter-devel, ripgrep:
 #   required to get correct config according to `nvim -c checkhealth`
 
 COPY libc-locales /etc/default/libc-locales
 
 RUN xbps-reconfigure -f glibc-locales
+
+# Build Ruby LSP
+# should it be installed via sudo?
+RUN gem install sorbet
+#RUN gem install solargraph ruby-lsp
+
+# Install the HTML, CSS, JSON, and ESLINT Language Servers from VSCode
+# and Bash Language Server https://github.com/bash-lsp/bash-language-server
+RUN npm install --location=global --no-color --no-update-notifier --no-fund \
+  vscode-langservers-extracted \
+  bash-language-server
+
+# Python PyRight Language Server
+RUN pip install pyright
+
+# Install Assembly Language Language Server
+#https://github.com/bergercookie/asm-lsp
+RUN cargo install asm-lsp
+
+# PHP language server is https://github.com/phpactor/phpactor
+# Install PHP Language Server with:
+# https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=phpactor
 
 #RUN npm install --no-color --no-update-notifier --no-fund --location=global \
 #  tree-sitter
